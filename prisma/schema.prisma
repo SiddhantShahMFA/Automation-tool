@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Workspace & Credentials ───────────────────────────────────────
+
+model WorkspaceSettings {
+  id               String   @id @default("default")
+  companyName      String?
+  setupCompleted   Boolean  @default(false)
+  notionDatabaseId String?
+  notionDatabaseName String?
+  prdTemplatePrefs Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("workspace_settings")
+}
+
+model IntegrationCredential {
+  id            String   @id @default(cuid())
+  type          String   // "notion" | "model" | "jira"
+  encryptedConfig String // AES-256-GCM encrypted JSON
+  maskedDisplay String   // e.g. "sk-...abc3"
+  isValid       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([type])
+  @@map("integration_credentials")
+}
+
+// ─── Projects & PRDs ───────────────────────────────────────────────
+
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  status    String   @default("active") // active | archived
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prdDocuments      PrdDocument[]
+  generationSessions GenerationSession[]
+
+  @@map("projects")
+}
+
+model PrdDocument {
+  id             String   @id @default(cuid())
+  projectId      String
+  project        Project  @relation(fields: [projectId], references: [id])
+  notionPageId   String?  @unique
+  notionPageUrl  String?
+  version        Int      @default(1)
+  status         String   @default("draft") // draft | published | updating
+  title          String?
+  contentJson    Json?    // Structured PRD content
+  sourceSummary  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  generatedArtifacts GeneratedArtifact[]
+  backgroundJobs     BackgroundJob[]
+
+  @@map("prd_documents")
+}
+
+// ─── Generation Sessions ───────────────────────────────────────────
+
+model GenerationSession {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id])
+  type        String   // "create" | "update"
+  status      String   @default("pending") // pending | clarifying | generating | completed | failed
+  rawInput    String   @db.Text
+  aiContext   Json?    // Accumulated AI context
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clarificationQuestions ClarificationQuestion[]
+  generatedArtifacts     GeneratedArtifact[]
+
+  @@map("generation_sessions")
+}
+
+model ClarificationQuestion {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   GenerationSession @relation(fields: [sessionId], references: [id])
+  question  String   @db.Text
+  answer    String?  @db.Text
+  orderNum  Int
+  required  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("clarification_questions")
+}
+
+// ─── Generated Artifacts ───────────────────────────────────────────
+
+model GeneratedArtifact {
+  id          String   @id @default(cuid())
+  sessionId   String?
+  session     GenerationSession? @relation(fields: [sessionId], references: [id])
+  prdDocumentId String?
+  prdDocument   PrdDocument? @relation(fields: [prdDocumentId], references: [id])
+  type        String   // "prd_draft" | "plan_md" | "jira_tickets"
+  contentJson Json     // Full artifact content
+  createdAt   DateTime @default(now())
+
+  @@map("generated_artifacts")
+}
+
+// ─── Background Jobs ───────────────────────────────────────────────
+
+model BackgroundJob {
+  id             String   @id @default(cuid())
+  type           String   // "generate_prd" | "publish_notion" | "generate_jira" | "generate_plan"
+  status         String   @default("pending") // pending | running | completed | failed | retrying
+  payload        Json
+  result         Json?
+  error          String?  @db.Text
+  retries        Int      @default(0)
+  maxRetries     Int      @default(3)
+  idempotencyKey String?  @unique
+  prdDocumentId  String?
+  prdDocument    PrdDocument? @relation(fields: [prdDocumentId], references: [id])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  @@map("background_jobs")
+}
+
+// ─── Audit Events ──────────────────────────────────────────────────
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  action    String   // "setup_completed" | "prd_created" | "prd_published" | etc.
+  entityType String?
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@map("audit_events")
+}
