@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import { Providers } from "@/components/Providers";
 
 export const metadata: Metadata = {
   title: "PRD Autopilot — AI-Powered PRD Generator",
@@ -16,10 +17,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <div className="app-layout">
-          <Sidebar />
-          <main className="main-content">{children}</main>
-        </div>
+        <Providers>
+          <div className="app-layout">
+            <Sidebar />
+            <main className="main-content">{children}</main>
+          </div>
+        </Providers>
       </body>
     </html>
   );
