@@ -43,9 +43,14 @@ export default async function ProjectsPage() {
                     <h1>Projects</h1>
                     <p>Your PRD documents</p>
                 </div>
-                <Link href="/projects/new" className="btn btn-primary btn-lg">
-                    + Create PRD
-                </Link>
+                <div className="flex gap-md">
+                    <Link href="/projects/update" className="btn btn-secondary btn-lg">
+                        Update from Link
+                    </Link>
+                    <Link href="/projects/new" className="btn btn-primary btn-lg">
+                        + Create PRD
+                    </Link>
+                </div>
             </div>
 
             {projects.length === 0 ? (

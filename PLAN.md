@@ -34,7 +34,7 @@ Implement these first, in this order:
 - Use a separate worker runtime for long-running LLM and Notion write jobs; the web app should enqueue and poll job status rather than doing everything inline.
 - Standardize the Notion PRD structure in v1: overview, goals, users, scope, functional requirements, non-functional requirements, assumptions/open questions, and change log.
 - Only support full round-trip updates for PRDs created by the app in the configured Notion database.
-- Defer Jira until after PRD create/update is working end to end.
+- Jira ticket generation and regeneration are fully supported, including epic and story drafting and publishing to Jira.
 
 ## Public APIs and Types
 - `POST /api/setup/notion/verify`
@@ -66,5 +66,5 @@ Core persisted entities:
 ## Assumptions
 - Internal-only v1 with no app-level login.
 - Vercel hosts the web app; a small worker service handles durable background jobs.
-- Notion is mandatory in setup; Jira stays optional until ticket generation is added.
-- `plan.md` is generated in-app later; GitHub push/commit is out of scope for v1.
+- Notion is mandatory in setup; Jira ticket generation and regeneration are optionally configured in setup and supported for active projects.
+- `plan.md` generation is fully supported; GitHub push/commit is out of scope for v1.

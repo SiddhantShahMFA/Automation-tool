@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-type Step = 'notion' | 'database' | 'model' | 'workspace';
+type Step = 'notion' | 'database' | 'model' | 'jira' | 'workspace';
 
 interface NotionDatabase {
     id: string;
@@ -19,7 +19,6 @@ export default function SetupPage() {
 
     // Notion state
     const [notionToken, setNotionToken] = useState('');
-    const [notionVerified, setNotionVerified] = useState(false);
     const [databases, setDatabases] = useState<NotionDatabase[]>([]);
     const [selectedDbId, setSelectedDbId] = useState('');
 
@@ -28,7 +27,14 @@ export default function SetupPage() {
     const [modelApiKey, setModelApiKey] = useState('');
     const [modelName, setModelName] = useState('gpt-4o');
     const [modelHeaders, setModelHeaders] = useState('');
-    const [modelVerified, setModelVerified] = useState(false);
+
+    // Jira state
+    const [jiraDomain, setJiraDomain] = useState('');
+    const [jiraEmail, setJiraEmail] = useState('');
+    const [jiraToken, setJiraToken] = useState('');
+    const [jiraVerified, setJiraVerified] = useState(false);
+    const [jiraProjects, setJiraProjects] = useState<{ id: string, key: string, name: string }[]>([]);
+    const [selectedJiraProject, setSelectedJiraProject] = useState('');
 
     // Workspace state
     const [companyName, setCompanyName] = useState('');
@@ -37,7 +43,8 @@ export default function SetupPage() {
         { key: 'notion', label: 'Notion', number: 1 },
         { key: 'database', label: 'Database', number: 2 },
         { key: 'model', label: 'AI Model', number: 3 },
-        { key: 'workspace', label: 'Workspace', number: 4 },
+        { key: 'jira', label: 'Jira', number: 4 },
+        { key: 'workspace', label: 'Workspace', number: 5 },
     ];
 
     const currentStepIndex = steps.findIndex((s) => s.key === currentStep);
@@ -59,7 +66,6 @@ export default function SetupPage() {
             });
             const data = await res.json();
             if (data.valid) {
-                setNotionVerified(true);
                 setDatabases(data.databases || []);
                 setSuccess('Notion connected successfully!');
                 setCurrentStep('database');
@@ -136,9 +142,8 @@ export default function SetupPage() {
                 });
                 const saveData = await saveRes.json();
                 if (saveData.success) {
-                    setModelVerified(true);
                     setSuccess('Model provider connected!');
-                    setCurrentStep('workspace');
+                    setCurrentStep('jira');
                 } else {
                     setError(saveData.error || 'Failed to save model config');
                 }
@@ -152,7 +157,68 @@ export default function SetupPage() {
         }
     };
 
-    // Step 4: Save workspace defaults
+    // Step 4: Verify & save Jira config
+    const handleVerifyJira = async () => {
+        clearMessages();
+        setLoading(true);
+        try {
+            const res = await fetch('/api/setup/jira/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    domain: jiraDomain,
+                    email: jiraEmail,
+                    apiToken: jiraToken,
+                }),
+            });
+            const data = await res.json();
+            if (data.valid) {
+                setJiraProjects(data.projects || []);
+                setJiraVerified(true);
+                setSuccess('Jira verified! Please select a default project.');
+            } else {
+                setError(data.error || 'Jira verification failed');
+            }
+        } catch {
+            setError('Failed to verify Jira');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleSaveJira = async () => {
+        if (!selectedJiraProject) {
+            setError('Please select a Jira project');
+            return;
+        }
+        clearMessages();
+        setLoading(true);
+        try {
+            const saveRes = await fetch('/api/setup/jira/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    domain: jiraDomain,
+                    email: jiraEmail,
+                    apiToken: jiraToken,
+                    projectKey: selectedJiraProject,
+                }),
+            });
+            const saveData = await saveRes.json();
+            if (saveData.success) {
+                setSuccess('Jira connected!');
+                setCurrentStep('workspace');
+            } else {
+                setError(saveData.error || 'Failed to save Jira config');
+            }
+        } catch {
+            setError('Failed to save Jira');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Step 5: Save workspace defaults
     const handleSaveWorkspace = async () => {
         clearMessages();
         setLoading(true);
@@ -190,10 +256,10 @@ export default function SetupPage() {
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                             <div
                                 className={`step-dot ${idx < currentStepIndex
-                                        ? 'step-dot-completed'
-                                        : idx === currentStepIndex
-                                            ? 'step-dot-active'
-                                            : 'step-dot-inactive'
+                                    ? 'step-dot-completed'
+                                    : idx === currentStepIndex
+                                        ? 'step-dot-active'
+                                        : 'step-dot-inactive'
                                     }`}
                             >
                                 {idx < currentStepIndex ? '✓' : step.number}
@@ -382,7 +448,105 @@ export default function SetupPage() {
                 </div>
             )}
 
-            {/* Step 4: Workspace Defaults */}
+            {/* Step 4: Jira config */}
+            {currentStep === 'jira' && (
+                <div className="card">
+                    <div className="card-header">
+                        <h2>Connect Jira</h2>
+                        <span className="badge badge-default">Optional</span>
+                    </div>
+                    <p className="text-secondary mb-lg">
+                        Connect Jira to generate Epic and Story tickets from your PRDs. Leave blank if you don&apos;t want to use Jira.
+                    </p>
+                    <div className="form-group">
+                        <label className="form-label">Jira Domain</label>
+                        <input
+                            type="text"
+                            className="form-input"
+                            placeholder="your-company.atlassian.net"
+                            value={jiraDomain}
+                            onChange={(e) => setJiraDomain(e.target.value.replace(/^https?:\/\//, '').replace(/\/$/, ''))}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Jira Email</label>
+                        <input
+                            type="email"
+                            className="form-input"
+                            placeholder="you@company.com"
+                            value={jiraEmail}
+                            onChange={(e) => setJiraEmail(e.target.value)}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Jira API Token</label>
+                        <input
+                            type="password"
+                            className="form-input"
+                            placeholder="ATATT..."
+                            value={jiraToken}
+                            onChange={(e) => setJiraToken(e.target.value)}
+                        />
+                    </div>
+
+                    {jiraVerified && jiraProjects.length > 0 && (
+                        <div className="form-group mt-md">
+                            <label className="form-label">Default Project</label>
+                            <select
+                                className="form-select"
+                                value={selectedJiraProject}
+                                onChange={(e) => setSelectedJiraProject(e.target.value)}
+                            >
+                                <option value="">Select a project...</option>
+                                {jiraProjects.map((p) => (
+                                    <option key={p.key} value={p.key}>
+                                        {p.name} ({p.key})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    <div className="flex gap-md">
+                        <button
+                            className="btn btn-secondary"
+                            onClick={() => setCurrentStep('model')}
+                        >
+                            ← Back
+                        </button>
+
+                        {!jiraVerified ? (
+                            <>
+                                <button
+                                    className="btn btn-secondary"
+                                    onClick={() => setCurrentStep('workspace')}
+                                >
+                                    Skip Jira
+                                </button>
+                                <button
+                                    className="btn btn-primary btn-lg"
+                                    onClick={handleVerifyJira}
+                                    disabled={loading || !jiraDomain || !jiraEmail || !jiraToken}
+                                >
+                                    {loading ? <span className="spinner" /> : null}
+                                    Verify Jira
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                className="btn btn-primary btn-lg"
+                                onClick={handleSaveJira}
+                                disabled={loading || !selectedJiraProject}
+                            >
+                                {loading ? <span className="spinner" /> : null}
+                                Save &amp; Continue
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Step 5: Workspace Defaults */}
             {currentStep === 'workspace' && (
                 <div className="card">
                     <div className="card-header">
@@ -421,13 +585,19 @@ export default function SetupPage() {
                                 <span className="badge badge-success">✓</span>
                                 <span>AI model configured ({modelName})</span>
                             </div>
+                            {jiraVerified && (
+                                <div className="flex items-center gap-md">
+                                    <span className="badge badge-success">✓</span>
+                                    <span>Jira connected ({selectedJiraProject})</span>
+                                </div>
+                            )}
                         </div>
                     </div>
 
                     <div className="flex gap-md mt-lg">
                         <button
                             className="btn btn-secondary"
-                            onClick={() => setCurrentStep('model')}
+                            onClick={() => setCurrentStep('jira')}
                         >
                             ← Back
                         </button>

@@ -4,6 +4,9 @@ import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
+import JiraSection from '@/components/JiraSection';
+import PlanSection from '@/components/PlanSection';
+
 interface PrdContent {
     title?: string;
     overview?: string;
@@ -29,6 +32,7 @@ export default async function ProjectDetailPage({
             prdDocuments: {
                 orderBy: { createdAt: 'desc' },
                 take: 1,
+                include: { generatedArtifacts: true },
             },
             generationSessions: {
                 orderBy: { createdAt: 'desc' },
@@ -44,12 +48,43 @@ export default async function ProjectDetailPage({
         notFound();
     }
 
+    // Workaround for strict TS typing if prisma client isn't fully refreshed in IDE yet
+    const projectJiraKey = (project as any).jiraProjectKey || null;
+
     const latestPrd = project.prdDocuments[0];
     const prdContent = latestPrd?.contentJson as PrdContent | null;
 
     const statusLabel = latestPrd?.status || 'new';
     const statusBadge =
         statusLabel === 'published' ? 'badge-success' : statusLabel === 'draft' ? 'badge-warning' : 'badge-default';
+
+    // Get Jira state
+    const workspace = await prisma.workspaceSettings.findUnique({ where: { id: 'default' } });
+    const jiraConfigured = !!workspace?.jiraProjectKey;
+    const jiraArtifact = latestPrd?.generatedArtifacts.find((a) => a.type === 'jira_tickets');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let existingJiraTickets: any = null;
+    let publishedJiraUrls: string[] | null = null;
+
+    if (jiraArtifact) {
+        const content = jiraArtifact.contentJson as Record<string, unknown>;
+        if (content.publishedUrls) {
+            existingJiraTickets = content.tickets;
+            publishedJiraUrls = content.publishedUrls as string[];
+        } else {
+            existingJiraTickets = content.tickets || content;
+        }
+    }
+
+    const defaultJiraProjectKey = workspace?.jiraProjectKey || null;
+
+    // Get Plan state
+    const planArtifact = latestPrd?.generatedArtifacts.find((a) => a.type === 'plan_md');
+    let existingPlan = null;
+    if (planArtifact) {
+        const content = planArtifact.contentJson as Record<string, unknown>;
+        existingPlan = content.plan as string || null;
+    }
 
     return (
         <div className="page-container">
@@ -208,6 +243,26 @@ export default async function ProjectDetailPage({
                     <h3>No PRD content yet</h3>
                     <p>This project&apos;s PRD hasn&apos;t been generated yet.</p>
                 </div>
+            )}
+
+            {/* Plan Integration */}
+            {latestPrd && (
+                <PlanSection
+                    prdDocumentId={latestPrd.id}
+                    existingPlan={existingPlan}
+                />
+            )}
+
+            {/* Jira Integration */}
+            {latestPrd && jiraConfigured && (
+                <JiraSection
+                    prdDocumentId={latestPrd.id}
+                    projectId={project.id}
+                    existingTickets={existingJiraTickets}
+                    publishedUrls={publishedJiraUrls}
+                    defaultWorkspaceJiraProjectKey={defaultJiraProjectKey}
+                    savedJiraProjectKey={projectJiraKey}
+                />
             )}
         </div>
     );
