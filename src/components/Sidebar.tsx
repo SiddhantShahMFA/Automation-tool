@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut, useSession } from 'next-auth/react';
 
 const navItems = [
     {
@@ -18,6 +19,7 @@ const navItems = [
 
 export function Sidebar() {
     const pathname = usePathname();
+    const { data: session } = useSession();
 
     return (
         <aside className="sidebar">
@@ -42,11 +44,22 @@ export function Sidebar() {
                         {item.label}
                     </Link>
                 ))}
+
+                {session && (
+                    <button
+                        onClick={() => signOut({ callbackUrl: '/login' })}
+                        className="nav-link w-full text-left flex items-center mt-4 text-gray-500 hover:text-red-600 transition-colors"
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}
+                    >
+                        <span className="nav-link-icon">🚪</span>
+                        Logout
+                    </button>
+                )}
             </nav>
 
             <div style={{ padding: 'var(--sp-md)', borderTop: '1px solid var(--border)' }}>
                 <div className="text-sm text-secondary">
-                    Internal Tool · No Auth Required
+                    {session?.user ? `Logged in as ${session.user.name || session.user.email}` : 'Not logged in'}
                 </div>
             </div>
         </aside>
