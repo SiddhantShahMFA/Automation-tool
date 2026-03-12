@@ -69,6 +69,10 @@ model PrdDocument {
   generatedArtifacts GeneratedArtifact[]
   backgroundJobs     BackgroundJob[]
   updateLogs         PrdUpdateLog[]
+  requirements       PrdRequirement[]
+  requirementChanges RequirementChange[]
+  jiraTickets        JiraTicket[]
+  artifactVersions   ArtifactVersion[]
 
   @@map("prd_documents")
 }
@@ -119,6 +123,114 @@ model GeneratedArtifact {
   createdAt     DateTime           @default(now())
 
   @@map("generated_artifacts")
+}
+
+// ─── Canonical PRD Requirements ────────────────────────────────────
+
+model PrdRequirement {
+  id            String   @id @default(cuid())
+  prdDocumentId String
+  prdDocument   PrdDocument @relation(fields: [prdDocumentId], references: [id])
+  stableKey     String
+  category      String // "functional" | "non_functional"
+  displayId     String?
+  title         String
+  description   String   @db.Text
+  priority      String?
+  status        String   @default("active") // active | removed
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  versions   RequirementVersion[]
+  changes    RequirementChange[]
+  jiraLinks  JiraTicketRequirementLink[]
+
+  @@unique([prdDocumentId, stableKey])
+  @@map("prd_requirements")
+}
+
+model RequirementVersion {
+  id            String   @id @default(cuid())
+  requirementId String
+  requirement   PrdRequirement @relation(fields: [requirementId], references: [id])
+  prdVersion    Int
+  title         String
+  description   String   @db.Text
+  priority      String?
+  snapshotJson  Json
+  createdAt     DateTime @default(now())
+
+  newChanges RequirementChange[] @relation("RequirementChangeNewVersion")
+  oldChanges RequirementChange[] @relation("RequirementChangeOldVersion")
+
+  @@map("requirement_versions")
+}
+
+model RequirementChange {
+  id              String   @id @default(cuid())
+  prdDocumentId   String
+  prdDocument     PrdDocument @relation(fields: [prdDocumentId], references: [id])
+  requirementId   String
+  requirement     PrdRequirement @relation(fields: [requirementId], references: [id])
+  prdVersion      Int
+  changeType      String // ADD | UPDATE | REMOVE
+  summary         String   @db.Text
+  oldVersionId    String?
+  oldVersion      RequirementVersion? @relation("RequirementChangeOldVersion", fields: [oldVersionId], references: [id])
+  newVersionId    String?
+  newVersion      RequirementVersion? @relation("RequirementChangeNewVersion", fields: [newVersionId], references: [id])
+  createdAt       DateTime @default(now())
+
+  @@map("requirement_changes")
+}
+
+// ─── Jira Canonical State ──────────────────────────────────────────
+
+model JiraTicket {
+  id              String   @id @default(cuid())
+  prdDocumentId   String
+  prdDocument     PrdDocument @relation(fields: [prdDocumentId], references: [id])
+  projectKey      String?
+  issueKey        String?
+  type            String // Epic | Story
+  summary         String
+  description     String   @db.Text
+  status          String   @default("draft") // draft | published | close_recommended
+  lastAction      String   @default("CREATE") // CREATE | UPDATE | KEEP | CLOSE
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  requirementLinks JiraTicketRequirementLink[]
+
+  @@map("jira_tickets")
+}
+
+model JiraTicketRequirementLink {
+  id            String   @id @default(cuid())
+  jiraTicketId   String
+  jiraTicket     JiraTicket @relation(fields: [jiraTicketId], references: [id])
+  requirementId  String
+  requirement    PrdRequirement @relation(fields: [requirementId], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@unique([jiraTicketId, requirementId])
+  @@map("jira_ticket_requirement_links")
+}
+
+// ─── Artifact Versioning ───────────────────────────────────────────
+
+model ArtifactVersion {
+  id                String   @id @default(cuid())
+  prdDocumentId     String
+  prdDocument       PrdDocument @relation(fields: [prdDocumentId], references: [id])
+  type              String // prd_content | plan_md | jira_delta | jira_publish | notion_publish | backfill
+  prdVersion        Int
+  status            String   @default("draft")
+  sourceArtifactId  String?
+  payloadJson       Json
+  createdAt         DateTime @default(now())
+
+  @@map("artifact_versions")
 }
 
 // ─── Background Jobs ───────────────────────────────────────────────

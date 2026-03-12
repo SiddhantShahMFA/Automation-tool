@@ -1,5 +1,3 @@
-import { verifyJiraCredentials } from './src/lib/jira/client';
-
 async function testJira() {
     const domainUrl = 'https://mobilefirstapplications-team-k1f9xhyn.atlassian.net';
 

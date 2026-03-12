@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy && prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev --name canonical_prd_history",
+    "prisma:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@notionhq/client": "^5.11.1",

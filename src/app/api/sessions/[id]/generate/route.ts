@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/db';
 import { getModelClient } from '@/lib/ai/client';
+import { CANONICAL_SCHEMA_REQUIRED_MESSAGE, getCanonicalSchemaStatus, syncCanonicalPrdState } from '@/lib/prd/canonical';
 import {
     SYSTEM_PROMPT_GENERATE_PRD,
     buildGeneratePrdUserPrompt,
@@ -88,7 +90,7 @@ export async function POST(
             data: {
                 sessionId,
                 type: 'prd_draft',
-                contentJson: prdContent,
+                contentJson: prdContent as unknown as Prisma.InputJsonValue,
             },
         });
 
@@ -97,16 +99,27 @@ export async function POST(
             where: { projectId: session.projectId },
             orderBy: { createdAt: 'desc' },
         });
+        const canonicalSchema = await getCanonicalSchemaStatus();
 
         if (prdDoc) {
             await prisma.prdDocument.update({
                 where: { id: prdDoc.id },
                 data: {
-                    contentJson: prdContent,
+                    contentJson: prdContent as unknown as Prisma.InputJsonValue,
                     title: prdContent.title || prdDoc.title,
                     status: 'draft',
                 },
             });
+
+            if (canonicalSchema.ready) {
+                await syncCanonicalPrdState({
+                    prdDocumentId: prdDoc.id,
+                    prdContent,
+                    prdVersion: prdDoc.version,
+                    sourceArtifactId: artifact.id,
+                    changeSummary: 'Initial PRD generation',
+                });
+            }
         }
 
         // Update session and project
@@ -120,11 +133,31 @@ export async function POST(
             data: { name: prdContent.title || session.project.name },
         });
 
+        if (prdDoc) {
+            await prisma.auditEvent.create({
+                data: {
+                    action: 'prd_generated',
+                    entityType: 'prd_document',
+                    entityId: prdDoc.id,
+                    metadata: {
+                        projectId: session.projectId,
+                        prdVersion: prdDoc.version,
+                        artifactId: artifact.id,
+                    },
+                },
+            });
+        }
+
         return NextResponse.json({
             success: true,
             artifactId: artifact.id,
             prdContent,
             prdDocumentId: prdDoc?.id,
+            projectId: session.projectId,
+            version: prdDoc?.version || 1,
+            canonicalSchemaReady: canonicalSchema.ready,
+            warning: canonicalSchema.ready ? null : CANONICAL_SCHEMA_REQUIRED_MESSAGE,
+            missingTables: canonicalSchema.ready ? [] : canonicalSchema.missingTables,
         });
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown error';

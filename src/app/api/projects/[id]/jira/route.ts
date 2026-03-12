@@ -11,11 +11,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             return NextResponse.json({ success: false, error: 'Jira project key is required' }, { status: 400 });
         }
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const project = await prisma.project.update({
             where: { id },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            data: { jiraProjectKey } as any,
+            data: { jiraProjectKey },
         });
 
         return NextResponse.json({ success: true, project });

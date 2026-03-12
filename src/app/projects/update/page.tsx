@@ -7,7 +7,7 @@ export default function UpdatePrdPage() {
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState<{ prdDocumentId: string; notionPageUrl: string } | null>(null);
+    const [success, setSuccess] = useState<{ projectId: string; prdDocumentId: string; notionPageUrl: string } | null>(null);
 
     const [notionUrl, setNotionUrl] = useState('');
     const [instructions, setInstructions] = useState('');
@@ -35,14 +35,15 @@ export default function UpdatePrdPage() {
 
 
             setSuccess({
+                projectId: data.projectId,
                 prdDocumentId: data.prdDocumentId,
                 notionPageUrl: data.notionPageUrl,
             });
             // Clear inputs
             setNotionUrl('');
             setInstructions('');
-        } catch (err: any) {
-            setError(err.message || 'Failed to update PRD');
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Failed to update PRD');
         } finally {
             setLoading(false);
             setStatusText(null);
@@ -53,7 +54,7 @@ export default function UpdatePrdPage() {
         <div className="page-container">
             <div className="page-header">
                 <h1>Update PRD from Notion Link</h1>
-                <p>Provide the Notion page link of an existing generated PRD and what you'd like to change.</p>
+                <p>Provide the Notion page link of an existing generated PRD and what you&apos;d like to change.</p>
             </div>
 
             {error && <div className="alert alert-error mb-md">⚠️ {error}</div>}
@@ -109,7 +110,7 @@ export default function UpdatePrdPage() {
             </div>
             {success && (
                 <div className="mt-md" style={{ textAlign: 'right' }}>
-                    <button className="btn btn-secondary" onClick={() => router.push(`/projects/${success.prdDocumentId}`)}>
+                    <button className="btn btn-secondary" onClick={() => router.push(`/projects/${success.projectId}`)}>
                         View Local PRD
                     </button>
                 </div>

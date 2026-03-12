@@ -116,6 +116,63 @@ export function buildGenerateJiraUserPrompt(prdContentText: string, existingTick
   return prompt;
 }
 
+export const SYSTEM_PROMPT_GENERATE_JIRA_DELTA = `You are an expert Software Architect generating Jira delta actions from canonical PRD requirement changes.
+
+You will receive:
+- the current PRD content,
+- the changed requirements for the current PRD version,
+- the existing Jira tickets already mapped to this PRD,
+- the target Jira project key.
+
+Return ONLY a JSON array of actions. Each action must use this shape:
+[
+  {
+    "action": "CREATE|UPDATE|KEEP|CLOSE",
+    "issueKey": "ENG-123 or null",
+    "type": "Epic|Story",
+    "summary": "Ticket summary",
+    "description": "Ticket description",
+    "requirementIds": ["canonical-requirement-id"],
+    "projectKey": "ENG"
+  }
+]
+
+Rules:
+- Only emit actions that are necessary for the changed requirements.
+- If there is no existing Epic, create one Epic.
+- For existing mapped tickets that still fit unchanged behavior, use KEEP.
+- For removed requirements, use CLOSE instead of DELETE.
+- Every Story must include linked requirement IDs.
+- Every output item must include a projectKey and requirementIds array.
+- Return valid JSON only. No markdown or explanation.`;
+
+export function buildGenerateJiraDeltaUserPrompt(params: {
+  prdContentText: string;
+  changedRequirementsJson: string;
+  existingTicketsJson: string;
+  targetProjectKey: string;
+}): string {
+  return `Generate a Jira delta for the latest PRD version.
+
+---TARGET PROJECT KEY---
+${params.targetProjectKey}
+---END TARGET PROJECT KEY---
+
+---CURRENT PRD CONTENT---
+${params.prdContentText}
+---END CURRENT PRD CONTENT---
+
+---CHANGED REQUIREMENTS---
+${params.changedRequirementsJson}
+---END CHANGED REQUIREMENTS---
+
+---EXISTING JIRA TICKETS---
+${params.existingTicketsJson}
+---END EXISTING JIRA TICKETS---
+
+Return ONLY the JSON array of Jira delta actions.`;
+}
+
 export const SYSTEM_PROMPT_GENERATE_PLAN = `You are an expert Software Architect creating a detailed Implementation Plan (\`PLAN.md\`) based on a Product Requirements Document (PRD).
 
 Your job is to break down the PRD into a phased development plan. Follow these rules:

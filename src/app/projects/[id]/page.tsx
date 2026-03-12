@@ -1,4 +1,10 @@
 import { prisma } from '@/lib/db';
+import {
+    CANONICAL_SCHEMA_REQUIRED_MESSAGE,
+    ensureCanonicalPrdState,
+    getCanonicalSchemaStatus,
+    getProjectTimeline,
+} from '@/lib/prd/canonical';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
@@ -6,6 +12,8 @@ export const dynamic = 'force-dynamic';
 
 import JiraSection from '@/components/JiraSection';
 import PlanSection from '@/components/PlanSection';
+import TimelineSection from '@/components/TimelineSection';
+import type { JiraDraftTicket } from '@/lib/jira/client';
 
 interface PrdContent {
     title?: string;
@@ -48,11 +56,16 @@ export default async function ProjectDetailPage({
         notFound();
     }
 
-    // Workaround for strict TS typing if prisma client isn't fully refreshed in IDE yet
-    const projectJiraKey = (project as any).jiraProjectKey || null;
+    const projectJiraKey = project.jiraProjectKey || null;
 
     const latestPrd = project.prdDocuments[0];
     const prdContent = latestPrd?.contentJson as PrdContent | null;
+    const canonicalSchema = await getCanonicalSchemaStatus();
+    const canonicalSchemaReady = canonicalSchema.ready;
+
+    if (latestPrd && canonicalSchemaReady) {
+        await ensureCanonicalPrdState(latestPrd.id);
+    }
 
     const statusLabel = latestPrd?.status || 'new';
     const statusBadge =
@@ -62,18 +75,24 @@ export default async function ProjectDetailPage({
     const workspace = await prisma.workspaceSettings.findUnique({ where: { id: 'default' } });
     const jiraConfigured = !!workspace?.jiraProjectKey;
     const jiraArtifact = latestPrd?.generatedArtifacts.find((a) => a.type === 'jira_tickets');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let existingJiraTickets: any = null;
+    let existingJiraTickets: JiraDraftTicket[] | null = null;
     let publishedJiraUrls: string[] | null = null;
+    let jiraArtifactVersionId: string | null = null;
 
     if (jiraArtifact) {
         const content = jiraArtifact.contentJson as Record<string, unknown>;
+        const ticketPayload = Array.isArray(content.tickets)
+            ? content.tickets as JiraDraftTicket[]
+            : Array.isArray(content)
+                ? content as unknown as JiraDraftTicket[]
+                : null;
         if (content.publishedUrls) {
-            existingJiraTickets = content.tickets;
+            existingJiraTickets = ticketPayload;
             publishedJiraUrls = content.publishedUrls as string[];
         } else {
-            existingJiraTickets = content.tickets || content;
+            existingJiraTickets = ticketPayload;
         }
+        jiraArtifactVersionId = typeof content.artifactVersionId === 'string' ? content.artifactVersionId : null;
     }
 
     const defaultJiraProjectKey = workspace?.jiraProjectKey || null;
@@ -85,6 +104,8 @@ export default async function ProjectDetailPage({
         const content = planArtifact.contentJson as Record<string, unknown>;
         existingPlan = content.plan as string || null;
     }
+
+    const timeline = canonicalSchemaReady ? await getProjectTimeline(project.id) : [];
 
     return (
         <div className="page-container">
@@ -126,6 +147,12 @@ export default async function ProjectDetailPage({
                     </div>
                 </div>
             </div>
+
+            {!canonicalSchemaReady && (
+                <div className="alert alert-warning mb-md">
+                    {CANONICAL_SCHEMA_REQUIRED_MESSAGE} Missing tables: {canonicalSchema.missingTables.join(', ')}.
+                </div>
+            )}
 
             {/* PRD Content */}
             {prdContent ? (
@@ -254,16 +281,19 @@ export default async function ProjectDetailPage({
             )}
 
             {/* Jira Integration */}
-            {latestPrd && jiraConfigured && (
+            {latestPrd && jiraConfigured && canonicalSchemaReady && (
                 <JiraSection
                     prdDocumentId={latestPrd.id}
                     projectId={project.id}
                     existingTickets={existingJiraTickets}
                     publishedUrls={publishedJiraUrls}
+                    artifactVersionId={jiraArtifactVersionId}
                     defaultWorkspaceJiraProjectKey={defaultJiraProjectKey}
                     savedJiraProjectKey={projectJiraKey}
                 />
             )}
+
+            {canonicalSchemaReady && <TimelineSection entries={timeline} />}
         </div>
     );
 }

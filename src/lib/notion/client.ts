@@ -42,22 +42,25 @@ export async function verifyNotionToken(
             console.log(`Type: ${r.object}, ID: ${r.id}, Title: ${'title' in r ? JSON.stringify(r.title) : 'none'}`);
         });
 
-        const databases = (searchResult.results as any[])
-            .filter((r) => r.object === 'database' || r.object === 'data_source')
+        const searchableResults = searchResult.results as Array<Record<string, unknown>>;
+
+        const databases = searchableResults
+            .filter((result) => result.object === 'database' || result.object === 'data_source')
             .map((db) => {
-                const titleProp = 'title' in db ? db.title : [];
+                const titleProp = Array.isArray(db.title) ? db.title : [];
                 let titleStr = '';
                 if (Array.isArray(titleProp)) {
                     titleStr = titleProp.map((t: { plain_text?: string }) => t.plain_text || '').join('');
                 }
-                const finalTitle = titleStr || db.name || 'Untitled';
+                const dbWithName = db as { id: string; object: string; name?: string; parent?: { type?: string; database_id?: string } };
+                const finalTitle = titleStr || dbWithName.name || 'Untitled';
 
-                let realId = db.id;
-                if (db.object === 'data_source' && db.parent?.type === 'database_id') {
-                    realId = db.parent.database_id;
+                let realId = typeof dbWithName.id === 'string' ? dbWithName.id : '';
+                if (db.object === 'data_source' && dbWithName.parent?.type === 'database_id') {
+                    realId = dbWithName.parent.database_id || String(db.id);
                 }
 
-                return { id: realId, title: finalTitle };
+                return { id: String(realId), title: finalTitle };
             });
 
         return { valid: true, databases };

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { Prisma } from '@/generated/prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 
 export type JobType = 'generate_prd' | 'publish_notion' | 'generate_jira' | 'generate_plan';
@@ -25,7 +26,7 @@ export async function enqueueJob(
         data: {
             type,
             status: 'pending',
-            payload: payload as any,
+            payload: payload as unknown as Prisma.InputJsonValue,
             idempotencyKey,
             prdDocumentId: options?.prdDocumentId,
         },
@@ -56,7 +57,7 @@ export async function completeJob(
         where: { id: jobId },
         data: {
             status: 'completed',
-            result: result as any,
+            result: result as unknown as Prisma.InputJsonValue,
             completedAt: new Date(),
         },
     });

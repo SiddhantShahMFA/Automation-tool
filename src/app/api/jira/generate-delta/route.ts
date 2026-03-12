@@ -13,14 +13,7 @@ export async function POST(request: NextRequest) {
         }
 
         const result = await generateJiraDelta({ prdDocumentId, targetProjectKey });
-
-        return NextResponse.json({
-            success: true,
-            tickets: result.actions,
-            artifactVersionId: result.artifactVersionId,
-            changedRequirementIds: result.changedRequirementIds,
-            targetProjectKey: result.targetProjectKey,
-        });
+        return NextResponse.json({ success: true, ...result });
     } catch (err: unknown) {
         if (isCanonicalSchemaNotReadyError(err)) {
             return NextResponse.json(

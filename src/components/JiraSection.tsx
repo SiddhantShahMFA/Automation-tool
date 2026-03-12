@@ -1,18 +1,24 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-interface JiraTicket {
+interface JiraTicketAction {
+    id?: string;
+    action?: 'CREATE' | 'UPDATE' | 'KEEP' | 'CLOSE' | 'DELETE';
+    issueKey?: string;
+    projectKey?: string | null;
     type: 'Epic' | 'Story';
     summary: string;
     description: string;
+    requirementIds?: string[];
 }
 
 interface JiraSectionProps {
     prdDocumentId: string;
     projectId: string;
-    existingTickets: JiraTicket[] | null;
+    existingTickets: JiraTicketAction[] | null;
     publishedUrls: string[] | null;
+    artifactVersionId: string | null;
     defaultWorkspaceJiraProjectKey: string | null;
     savedJiraProjectKey: string | null;
 }
@@ -22,20 +28,27 @@ export default function JiraSection({
     projectId,
     existingTickets,
     publishedUrls,
+    artifactVersionId,
     defaultWorkspaceJiraProjectKey,
     savedJiraProjectKey,
 }: JiraSectionProps) {
-    const [tickets, setTickets] = useState<JiraTicket[] | null>(existingTickets);
+    const getActionId = (ticket: JiraTicketAction, index: number) =>
+        ticket.id || ticket.issueKey || `${ticket.type}-${ticket.summary}-${index}`;
+
+    const [tickets, setTickets] = useState<JiraTicketAction[] | null>(existingTickets);
     const [urls, setUrls] = useState<string[] | null>(publishedUrls);
+    const [deltaArtifactVersionId, setDeltaArtifactVersionId] = useState<string | null>(artifactVersionId);
+    const [selectedActionIds, setSelectedActionIds] = useState<string[]>(
+        existingTickets?.map((ticket, index) => getActionId(ticket, index)) || []
+    );
     const [generating, setGenerating] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
-    // Project Space State
     const [activeJiraProjectKey, setActiveJiraProjectKey] = useState<string | null>(
         savedJiraProjectKey || defaultWorkspaceJiraProjectKey
     );
-    const [availableProjects, setAvailableProjects] = useState<{ id: string, key: string, name: string }[]>([]);
+    const [availableProjects, setAvailableProjects] = useState<Array<{ id: string; key: string; name: string }>>([]);
     const [loadingProjects, setLoadingProjects] = useState(false);
     const [isEditingSpace, setIsEditingSpace] = useState(!savedJiraProjectKey);
     const [isCreatingSpace, setIsCreatingSpace] = useState(false);
@@ -43,7 +56,6 @@ export default function JiraSection({
     const [newProjectKey, setNewProjectKey] = useState('');
     const [publishCountdown, setPublishCountdown] = useState<number | null>(null);
 
-    // Fetch available projects when editing space
     const fetchProjects = async () => {
         setLoadingProjects(true);
         try {
@@ -64,19 +76,6 @@ export default function JiraSection({
             fetchProjects();
         }
     }, [isEditingSpace, availableProjects.length]);
-
-    useEffect(() => {
-        if (publishCountdown === null) return;
-        if (publishCountdown === 0) {
-            setPublishCountdown(null);
-            handlePublish();
-            return;
-        }
-        const timer = setTimeout(() => {
-            setPublishCountdown(publishCountdown - 1);
-        }, 1000);
-        return () => clearTimeout(timer);
-    }, [publishCountdown]);
 
     const handleSaveSpace = async () => {
         if (!activeJiraProjectKey) return;
@@ -101,7 +100,6 @@ export default function JiraSection({
         setLoadingProjects(true);
         setError(null);
         try {
-            // 1. Create Jira Space
             const createRes = await fetch('/api/jira/projects', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -116,15 +114,12 @@ export default function JiraSection({
             }
 
             const createdProjectKey = createData.project.key;
-
-            // 2. Save it to the project
             await fetch(`/api/projects/${projectId}/jira`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ jiraProjectKey: createdProjectKey }),
             });
 
-            // 3. Update states
             setActiveJiraProjectKey(createdProjectKey);
             setIsEditingSpace(false);
             setIsCreatingSpace(false);
@@ -142,19 +137,24 @@ export default function JiraSection({
         setError(null);
         setGenerating(true);
         try {
-            const res = await fetch(`/api/jira/generate`, {
+            const res = await fetch('/api/jira/generate-delta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prdDocumentId }),
+                body: JSON.stringify({ prdDocumentId, targetProjectKey: activeJiraProjectKey }),
             });
             const data = await res.json();
             if (!data.success) {
-                setError(data.error || 'Failed to generate tickets');
+                setError(data.error || 'Failed to generate Jira delta');
                 return;
             }
-            setTickets(data.tickets);
+
+            const actions = data.actions || data.tickets || [];
+            setTickets(actions);
+            setUrls(null);
+            setDeltaArtifactVersionId(data.artifactVersionId || null);
+            setSelectedActionIds(actions.map((ticket: JiraTicketAction, index: number) => getActionId(ticket, index)));
         } catch {
-            setError('Error generating tickets');
+            setError('Error generating Jira delta');
         } finally {
             setGenerating(false);
         }
@@ -168,50 +168,72 @@ export default function JiraSection({
         setPublishCountdown(null);
     };
 
-    const handlePublish = async () => {
+    const toggleSelection = (actionId: string) => {
+        setSelectedActionIds((current) =>
+            current.includes(actionId)
+                ? current.filter((id) => id !== actionId)
+                : [...current, actionId]
+        );
+    };
+
+    const handlePublish = useCallback(async () => {
         setError(null);
         setPublishing(true);
         try {
-            const res = await fetch(`/api/jira/publish`, {
+            const res = await fetch('/api/jira/publish-delta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     prdDocumentId,
-                    targetProjectKey: activeJiraProjectKey
+                    targetProjectKey: activeJiraProjectKey,
+                    artifactVersionId: deltaArtifactVersionId,
+                    approvedActionIds: selectedActionIds,
                 }),
             });
             const data = await res.json();
             if (!data.success) {
-                setError(data.error || 'Failed to publish tickets');
+                setError(data.error || 'Failed to publish Jira delta');
                 return;
             }
             setUrls(data.urls);
         } catch {
-            setError('Error publishing tickets');
+            setError('Error publishing Jira delta');
         } finally {
             setPublishing(false);
         }
-    };
+    }, [activeJiraProjectKey, deltaArtifactVersionId, prdDocumentId, selectedActionIds]);
+
+    useEffect(() => {
+        if (publishCountdown === null) return;
+        if (publishCountdown === 0) {
+            setPublishCountdown(null);
+            void handlePublish();
+            return;
+        }
+        const timer = setTimeout(() => setPublishCountdown(publishCountdown - 1), 1000);
+        return () => clearTimeout(timer);
+    }, [handlePublish, publishCountdown]);
+
+    const selectedCount = selectedActionIds.length;
 
     return (
         <div className="card mt-lg" style={{ marginTop: 'var(--sp-xl)' }}>
             <div className="card-header">
-                <h2>Jira Board</h2>
+                <h2>Jira Delta Review</h2>
                 <div className="flex gap-sm">
                     {!tickets && !urls && <span className="badge badge-default">Not Generated</span>}
-                    {tickets && !urls && <span className="badge badge-warning">Drafts</span>}
+                    {tickets && !urls && <span className="badge badge-warning">Draft Ready</span>}
                     {urls && <span className="badge badge-success">Published</span>}
                 </div>
             </div>
 
-            {/* Jira Space Selection */}
             <div className="mb-lg p-md" style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
                 <div className="flex items-center justify-between mb-sm">
                     <h3 style={{ fontSize: '1rem', margin: 0 }}>Target Jira Space</h3>
                     {!isEditingSpace ? (
                         <button className="btn btn-sm btn-ghost" onClick={() => {
                             setIsEditingSpace(true);
-                            fetchProjects();
+                            void fetchProjects();
                         }}>
                             Change
                         </button>
@@ -232,7 +254,7 @@ export default function JiraSection({
                         <input
                             type="text"
                             className="form-input"
-                            placeholder="Project Name (e.g., My Software Team)"
+                            placeholder="Project Name"
                             value={newProjectName}
                             onChange={(e) => setNewProjectName(e.target.value)}
                             disabled={loadingProjects}
@@ -241,7 +263,7 @@ export default function JiraSection({
                             <input
                                 type="text"
                                 className="form-input"
-                                placeholder="Project Key (e.g., SAM)"
+                                placeholder="Project Key"
                                 value={newProjectKey}
                                 onChange={(e) => setNewProjectKey(e.target.value)}
                                 disabled={loadingProjects}
@@ -275,9 +297,9 @@ export default function JiraSection({
                                 style={{ flex: 1 }}
                             >
                                 <option value="">Select a Jira Space...</option>
-                                {availableProjects.map((p) => (
-                                    <option key={p.key} value={p.key}>
-                                        {p.name} ({p.key})
+                                {availableProjects.map((project) => (
+                                    <option key={project.key} value={project.key}>
+                                        {project.name} ({project.key})
                                     </option>
                                 ))}
                             </select>
@@ -303,7 +325,7 @@ export default function JiraSection({
                 )}
             </div>
 
-            {error && <div className="alert alert-error mb-md">⚠️ {error}</div>}
+            {error && <div className="alert alert-error mb-md">Warning: {error}</div>}
 
             {!tickets && !urls && (
                 <div className="flex gap-md">
@@ -313,9 +335,9 @@ export default function JiraSection({
                         disabled={generating || !activeJiraProjectKey}
                     >
                         {generating ? <span className="spinner" /> : null}
-                        Generate Jira Tickets
+                        Generate Jira Delta
                     </button>
-                    {(!activeJiraProjectKey && !isEditingSpace) && (
+                    {!activeJiraProjectKey && !isEditingSpace && (
                         <span className="text-secondary" style={{ alignSelf: 'center', color: 'var(--color-error)' }}>
                             Please select a Jira space first.
                         </span>
@@ -325,65 +347,87 @@ export default function JiraSection({
 
             {tickets && (
                 <div className="mt-md">
-                    <p className="text-secondary mb-md">Drafted {tickets.filter(t => t.type === 'Epic').length} Epic and {tickets.filter(t => t.type === 'Story').length} Stories.</p>
+                    <p className="text-secondary mb-md">
+                        Review the drafted delta and choose which actions should be published.
+                    </p>
+
                     <div className="flex flex-col gap-sm mb-lg">
-                        {tickets.map((t, i) => (
-                            <div key={i} className="card" style={{ padding: 'var(--sp-md)' }}>
-                                <div className="flex items-center gap-sm mb-sm">
-                                    <span className={`badge ${t.type === 'Epic' ? 'badge-accent' : 'badge-default'}`}>
-                                        {t.type}
-                                    </span>
-                                    <strong style={{ fontSize: '1.1rem' }}>{t.summary}</strong>
+                        {tickets.map((ticket, index) => {
+                            const actionId = getActionId(ticket, index);
+                            const selected = selectedActionIds.includes(actionId);
+                            return (
+                                <div key={actionId} className="card" style={{ padding: 'var(--sp-md)' }}>
+                                    <div className="flex items-center justify-between gap-sm mb-sm">
+                                        <div className="flex items-center gap-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={selected}
+                                                onChange={() => toggleSelection(actionId)}
+                                            />
+                                            <span className={`badge ${ticket.type === 'Epic' ? 'badge-accent' : 'badge-default'}`}>
+                                                {ticket.type}
+                                            </span>
+                                            <span className="badge badge-warning">{ticket.action || 'CREATE'}</span>
+                                            <strong style={{ fontSize: '1.1rem' }}>{ticket.summary}</strong>
+                                        </div>
+                                        {ticket.issueKey && (
+                                            <span className="text-secondary text-sm">{ticket.issueKey}</span>
+                                        )}
+                                    </div>
+                                    <p className="text-secondary text-sm" style={{ whiteSpace: 'pre-wrap' }}>
+                                        {ticket.description}
+                                    </p>
+                                    {ticket.requirementIds && ticket.requirementIds.length > 0 && (
+                                        <p className="text-secondary text-sm" style={{ marginTop: 'var(--sp-sm)' }}>
+                                            Linked requirements: {ticket.requirementIds.join(', ')}
+                                        </p>
+                                    )}
                                 </div>
-                                <p className="text-secondary text-sm" style={{ whiteSpace: 'pre-wrap' }}>
-                                    {t.description}
-                                </p>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
 
-                    <div className="flex gap-md">
+                    <div className="flex gap-md" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
                         <button
                             className="btn btn-secondary"
                             onClick={async () => {
                                 await handleGenerate();
-                                setUrls(null); // Clear URLs if regenerated successfully
                             }}
                             disabled={generating || publishing}
                         >
                             {generating ? <span className="spinner" /> : null}
-                            Regenerate Tickets
+                            Regenerate Delta
                         </button>
 
                         {!urls ? (
                             publishCountdown !== null ? (
                                 <div className="flex items-center gap-sm">
                                     <button
-                                        className="btn btn-primary bg-warning text-warning-content border-warning"
+                                        className="btn btn-primary"
                                         onClick={cancelPublish}
                                     >
-                                        Undo Push ({publishCountdown}s)
+                                        Undo Publish ({publishCountdown}s)
                                     </button>
-                                    <span className="text-secondary text-sm">Waiting to push...</span>
+                                    <span className="text-secondary text-sm">Waiting to publish {selectedCount} actions...</span>
                                 </div>
                             ) : (
                                 <button
                                     className="btn btn-primary"
                                     onClick={startPublishCountdown}
-                                    disabled={publishing || generating || !activeJiraProjectKey}
+                                    disabled={publishing || generating || !activeJiraProjectKey || selectedCount === 0}
                                 >
                                     {publishing ? <span className="spinner" /> : null}
-                                    Push to Jira
+                                    Publish Approved Actions ({selectedCount})
                                 </button>
                             )
                         ) : (
-                            <div className="flex items-center gap-sm">
+                            <div className="flex items-center gap-sm" style={{ flexWrap: 'wrap' }}>
                                 <div className="alert alert-success" style={{ margin: 0, padding: 'var(--sp-xs) var(--sp-sm)' }}>
-                                    ✅ Published to Jira!
+                                    Published to Jira
                                 </div>
-                                {urls.map((u, i) => (
-                                    <a key={i} href={u} target="_blank" rel="noreferrer" className="btn btn-sm btn-ghost" style={{ background: 'white' }}>
-                                        Open Ticket {i + 1}
+                                {urls.map((url, index) => (
+                                    <a key={url} href={url} target="_blank" rel="noreferrer" className="btn btn-sm btn-ghost">
+                                        Open Ticket {index + 1}
                                     </a>
                                 ))}
                             </div>

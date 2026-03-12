@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getJiraConfig, getJiraProjects, createJiraProject, getJiraMyself } from '@/lib/jira/client';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
     try {
         const config = await getJiraConfig();
         const projects = await getJiraProjects(config.domain, config.email, config.apiToken);

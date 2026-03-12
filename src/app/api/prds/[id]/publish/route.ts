@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getNotionClient } from '@/lib/notion/client';
 import { prdToNotionBlocks, buildNotionPageProperties } from '@/lib/notion/blocks';
+import {
+    CANONICAL_SCHEMA_REQUIRED_MESSAGE,
+    createArtifactVersion,
+    ensureCanonicalPrdState,
+    getCanonicalSchemaStatus,
+} from '@/lib/prd/canonical';
+import type { PrdContent } from '@/lib/prd/types';
 
 export async function POST(
     request: NextRequest,
@@ -16,6 +23,11 @@ export async function POST(
 
         if (!prdDoc) {
             return NextResponse.json({ error: 'PRD document not found' }, { status: 404 });
+        }
+
+        const canonicalSchema = await getCanonicalSchemaStatus();
+        if (canonicalSchema.ready) {
+            await ensureCanonicalPrdState(prdId);
         }
 
         // Idempotency: if already published, return existing URL
@@ -47,12 +59,12 @@ export async function POST(
         }
 
         const notion = await getNotionClient();
-        const prdContent = prdDoc.contentJson as unknown;
+        const prdContent = prdDoc.contentJson as unknown as PrdContent;
 
         // Build Notion page
-        const blocks = prdToNotionBlocks(prdContent as Parameters<typeof prdToNotionBlocks>[0]);
+        const blocks = prdToNotionBlocks(prdContent);
         const properties = buildNotionPageProperties(
-            prdContent as Parameters<typeof buildNotionPageProperties>[0],
+            prdContent,
             prdDoc.version,
             prdDoc.sourceSummary || undefined
         );
@@ -60,7 +72,7 @@ export async function POST(
         // Create page in Notion
         const page = await notion.pages.create({
             parent: { database_id: settings.notionDatabaseId },
-            properties: properties as any,
+            properties: properties as never,
             children: blocks,
         });
 
@@ -77,13 +89,29 @@ export async function POST(
             },
         });
 
-        // Audit event
+        let artifactVersionId: string | null = null;
+        if (canonicalSchema.ready) {
+            const artifactVersion = await createArtifactVersion({
+                prdDocumentId: prdId,
+                type: 'notion_publish',
+                prdVersion: prdDoc.version,
+                status: 'published',
+                payloadJson: { notionPageId: page.id, notionPageUrl },
+            });
+            artifactVersionId = artifactVersion.id;
+        }
+
         await prisma.auditEvent.create({
             data: {
                 action: 'prd_published',
                 entityType: 'prd_document',
                 entityId: prdId,
-                metadata: { notionPageId: page.id, notionPageUrl },
+                metadata: {
+                    notionPageId: page.id,
+                    notionPageUrl,
+                    artifactVersionId,
+                    prdVersion: prdDoc.version,
+                },
             },
         });
 
@@ -91,6 +119,10 @@ export async function POST(
             success: true,
             notionPageId: page.id,
             notionPageUrl,
+            artifactVersionId,
+            canonicalSchemaReady: canonicalSchema.ready,
+            warning: canonicalSchema.ready ? null : CANONICAL_SCHEMA_REQUIRED_MESSAGE,
+            missingTables: canonicalSchema.ready ? [] : canonicalSchema.missingTables,
         });
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown error';

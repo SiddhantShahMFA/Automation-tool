@@ -135,21 +135,23 @@ export async function createJiraProject(
     };
 }
 export interface JiraDraftTicket {
-    action?: 'CREATE' | 'UPDATE' | 'DELETE' | 'KEEP';
+    action?: 'CREATE' | 'UPDATE' | 'KEEP' | 'CLOSE' | 'DELETE';
     issueKey?: string;
+    projectKey?: string | null;
     type: 'Epic' | 'Story';
     summary: string;
     description: string;
+    requirementIds?: string[];
 }
 
 export async function syncJiraTickets(
     config: JiraConfig,
     projectKey: string,
     tickets: JiraDraftTicket[]
-): Promise<string[]> {
+): Promise<JiraDraftTicket[]> {
     const authHeader = getJiraAuthHeader(config);
-    const activeIssueKeys: string[] = [];
     let epicKey: string | null = null;
+    const syncedTickets: JiraDraftTicket[] = [];
 
     // Convert to Jira Document Format (Atlassian Document Format) for description
     const createAdfDescription = (text: string) => {
@@ -201,7 +203,9 @@ export async function syncJiraTickets(
 
             const data = await res.json();
             epicKey = data.key;
-            activeIssueKeys.push(epicKey!);
+            epic.issueKey = data.key;
+            epic.projectKey = projectKey;
+            syncedTickets.push(epic);
         } else if (epic.action === 'UPDATE' && epic.issueKey) {
             const payload = {
                 fields: {
@@ -225,12 +229,16 @@ export async function syncJiraTickets(
                 throw new Error(`Failed to update Epic ${epic.issueKey}: ${errBody}`);
             }
             epicKey = epic.issueKey;
-            activeIssueKeys.push(epicKey);
+            epic.projectKey = projectKey;
+            syncedTickets.push(epic);
         } else if (epic.action === 'KEEP' && epic.issueKey) {
             epicKey = epic.issueKey;
-            activeIssueKeys.push(epicKey);
+            epic.projectKey = projectKey;
+            syncedTickets.push(epic);
+        } else if ((epic.action === 'CLOSE' || epic.action === 'DELETE') && epic.issueKey) {
+            epic.projectKey = projectKey;
+            syncedTickets.push(epic);
         }
-        // If DELETE, we don't track it anymore locally, and could optionally trigger a Jira transition
     }
 
     // Process Stories
@@ -264,8 +272,9 @@ export async function syncJiraTickets(
                 console.error(`Failed to create Story: ${story.summary}`, await res.text());
             } else {
                 const data = await res.json();
-                activeIssueKeys.push(data.key);
-                story.issueKey = data.key; // Store key back for UI
+                story.issueKey = data.key;
+                story.projectKey = projectKey;
+                syncedTickets.push(story);
             }
         } else if (story.action === 'UPDATE' && story.issueKey) {
             const payload = {
@@ -288,15 +297,17 @@ export async function syncJiraTickets(
             if (!res.ok) {
                 console.error(`Failed to update Story: ${story.issueKey}`, await res.text());
             } else {
-                activeIssueKeys.push(story.issueKey);
+                story.projectKey = projectKey;
+                syncedTickets.push(story);
             }
         } else if (story.action === 'KEEP' && story.issueKey) {
-            activeIssueKeys.push(story.issueKey);
-        } else if (story.action === 'DELETE' && story.issueKey) {
-            // Optional: Transition issue to Done/Closed using Jira API.
-            // For now, we'll just omit it from the active list.
+            story.projectKey = projectKey;
+            syncedTickets.push(story);
+        } else if ((story.action === 'CLOSE' || story.action === 'DELETE') && story.issueKey) {
+            story.projectKey = projectKey;
+            syncedTickets.push(story);
         }
     }
 
-    return activeIssueKeys;
+    return syncedTickets;
 }

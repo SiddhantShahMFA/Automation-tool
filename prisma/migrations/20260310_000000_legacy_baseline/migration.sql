@@ -1,0 +1,2 @@
+-- Baseline marker for the preexisting legacy schema before Prisma migration history was added.
+-- This migration is marked as applied on existing databases and intentionally performs no SQL changes.

@@ -1,17 +1,5 @@
 import { BlockObjectRequest } from '@notionhq/client/build/src/api-endpoints';
-
-interface PrdContent {
-    title: string;
-    overview: string;
-    goals: string[];
-    targetUsers: Array<{ persona: string; description: string }>;
-    scope: { inScope: string[]; outOfScope: string[] };
-    functionalRequirements: Array<{ id: string; title: string; description: string; priority: string }>;
-    nonFunctionalRequirements: Array<{ id: string; title: string; description: string }>;
-    openQuestions: string[];
-    assumptions: string[];
-    changeLog: Array<{ version: string; date: string; changes: string }>;
-}
+import type { PrdContent } from '@/lib/prd/types';
 
 function heading2(text: string): BlockObjectRequest {
     return {
@@ -99,7 +87,9 @@ export function prdToNotionBlocks(prd: PrdContent): BlockObjectRequest[] {
     // Functional Requirements
     blocks.push(heading2('Functional Requirements'));
     for (const req of prd.functionalRequirements) {
-        blocks.push(heading3(`${req.id}: ${req.title} [${req.priority}]`));
+        const requirementLabel = req.id ? `${req.id}: ${req.title}` : req.title;
+        const prioritySuffix = req.priority ? ` [${req.priority}]` : '';
+        blocks.push(heading3(`${requirementLabel}${prioritySuffix}`));
         blocks.push(paragraph(req.description));
     }
     blocks.push(divider());
@@ -107,7 +97,8 @@ export function prdToNotionBlocks(prd: PrdContent): BlockObjectRequest[] {
     // Non-Functional Requirements
     blocks.push(heading2('Non-Functional Requirements'));
     for (const req of prd.nonFunctionalRequirements) {
-        blocks.push(heading3(`${req.id}: ${req.title}`));
+        const requirementLabel = req.id ? `${req.id}: ${req.title}` : req.title;
+        blocks.push(heading3(requirementLabel));
         blocks.push(paragraph(req.description));
     }
     blocks.push(divider());

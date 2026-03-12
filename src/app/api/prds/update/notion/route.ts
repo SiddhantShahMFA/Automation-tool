@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@/generated/prisma/client';
 import { prisma } from '@/lib/db';
 import { getNotionClient } from '@/lib/notion/client';
 import { getModelClient } from '@/lib/ai/client';
 import { prdToNotionBlocks, buildNotionPageProperties } from '@/lib/notion/blocks';
 import { SYSTEM_PROMPT_UPDATE_PRD, buildUpdatePrdUserPrompt } from '@/lib/ai/prompts';
+import {
+    CANONICAL_SCHEMA_REQUIRED_MESSAGE,
+    createArtifactVersion,
+    ensureCanonicalPrdState,
+    getCanonicalSchemaStatus,
+    syncCanonicalPrdState,
+} from '@/lib/prd/canonical';
+import type { PrdContent } from '@/lib/prd/types';
 
 function extractNotionPageId(url: string): string | null {
     try {
@@ -61,6 +70,11 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        const canonicalSchema = await getCanonicalSchemaStatus();
+        if (canonicalSchema.ready) {
+            await ensureCanonicalPrdState(prdDoc.id);
+        }
+
         const existingPrdJson = JSON.stringify(prdDoc.contentJson);
 
         // 2. Call AI to generate updated PRD content
@@ -78,7 +92,7 @@ export async function POST(request: NextRequest) {
 
         const content = completion.choices[0]?.message?.content || '{}';
         const cleaned = content.replace(/```json\n?|\n?```/g, '').trim();
-        const updatedPrdContent = JSON.parse(cleaned);
+        const updatedPrdContent = JSON.parse(cleaned) as PrdContent;
 
         // 3. Save Update Log in database and update PRD
         const newVersion = prdDoc.version + 1;
@@ -87,7 +101,7 @@ export async function POST(request: NextRequest) {
             data: {
                 prdDocumentId: prdDoc.id,
                 previousContent: prdDoc.contentJson,
-                newContent: updatedPrdContent,
+                newContent: updatedPrdContent as unknown as Prisma.InputJsonValue,
                 changesSummary: instructions
             }
         });
@@ -95,12 +109,21 @@ export async function POST(request: NextRequest) {
         await prisma.prdDocument.update({
             where: { id: prdDoc.id },
             data: {
-                contentJson: updatedPrdContent,
+                contentJson: updatedPrdContent as unknown as Prisma.InputJsonValue,
                 version: newVersion,
                 title: updatedPrdContent.title || prdDoc.title,
                 status: 'published' // Ensure it's marked as published
             }
         });
+
+        const syncResult = canonicalSchema.ready
+            ? await syncCanonicalPrdState({
+                prdDocumentId: prdDoc.id,
+                prdContent: updatedPrdContent,
+                prdVersion: newVersion,
+                changeSummary: instructions,
+            })
+            : { changedRequirementIds: [] as string[], artifactVersionIds: [] as string[] };
 
         // 4. Update the Notion Page
         const notion = await getNotionClient();
@@ -109,7 +132,7 @@ export async function POST(request: NextRequest) {
         let hasMore = true;
         let nextCursor: string | undefined = undefined;
         while (hasMore) {
-            const children: any = await notion.blocks.children.list({
+            const children = await notion.blocks.children.list({
                 block_id: pageId,
                 start_cursor: nextCursor,
             });
@@ -128,9 +151,9 @@ export async function POST(request: NextRequest) {
         }
 
         // Add the new blocks
-        const blocks = prdToNotionBlocks(updatedPrdContent as any);
+        const blocks = prdToNotionBlocks(updatedPrdContent);
         const properties = buildNotionPageProperties(
-            updatedPrdContent as any,
+            updatedPrdContent,
             newVersion,
             prdDoc.sourceSummary || undefined
         );
@@ -138,19 +161,55 @@ export async function POST(request: NextRequest) {
         // Append new blocks
         await notion.blocks.children.append({
             block_id: pageId,
-            children: blocks as any,
+            children: blocks as never,
         });
 
         // Update properties (Title, Status, Version, Last Updated, etc.)
         await notion.pages.update({
             page_id: pageId,
-            properties: properties as any
+            properties: properties as never
+        });
+
+        const artifactVersion = canonicalSchema.ready
+            ? await createArtifactVersion({
+                prdDocumentId: prdDoc.id,
+                type: 'notion_publish',
+                prdVersion: newVersion,
+                status: 'published',
+                payloadJson: {
+                    notionPageId: pageId,
+                    notionPageUrl: notionUrl,
+                    changedRequirementIds: syncResult.changedRequirementIds,
+                },
+            })
+            : null;
+
+        await prisma.auditEvent.create({
+            data: {
+                action: 'prd_updated',
+                entityType: 'prd_document',
+                entityId: prdDoc.id,
+                metadata: {
+                    projectId: prdDoc.projectId,
+                    prdVersion: newVersion,
+                    changedRequirementIds: syncResult.changedRequirementIds,
+                    artifactVersionIds: syncResult.artifactVersionIds,
+                    notionArtifactVersionId: artifactVersion?.id || null,
+                },
+            },
         });
 
         return NextResponse.json({
             success: true,
             notionPageUrl: notionUrl,
             prdDocumentId: prdDoc.id,
+            projectId: prdDoc.projectId,
+            version: newVersion,
+            changedRequirementIds: syncResult.changedRequirementIds,
+            artifactVersionIds: artifactVersion ? [...syncResult.artifactVersionIds, artifactVersion.id] : syncResult.artifactVersionIds,
+            canonicalSchemaReady: canonicalSchema.ready,
+            warning: canonicalSchema.ready ? null : CANONICAL_SCHEMA_REQUIRED_MESSAGE,
+            missingTables: canonicalSchema.ready ? [] : canonicalSchema.missingTables,
         });
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown error';
